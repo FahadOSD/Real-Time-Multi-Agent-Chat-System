@@ -10,6 +10,7 @@ from .serializers import UserSerializer, MessageSerializer
 from .models import Message
 from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import ValidationError
 
 User = get_user_model()
 
@@ -59,10 +60,17 @@ class MessageListCreateAPIView(generics.ListCreateAPIView):
         ).order_by('timestamp')
 
     def perform_create(self, serializer):
-        recipient_id = self.request.data.get('recipient_id')
+        # allow recipient to be provided either in body or as query param `other_id`
+        recipient_id = self.request.data.get('recipient_id') or self.request.query_params.get('other_id')
         content = self.request.data.get('content')
-        if not recipient_id or not content:
-            raise ValueError('recipient_id and content required')
+        errors = {}
+        if not recipient_id:
+            errors['recipient_id'] = 'This field is required.'
+        if not content:
+            errors['content'] = 'This field is required.'
+        if errors:
+            raise ValidationError(errors)
+
         serializer.save(sender=self.request.user, recipient_id=recipient_id, content=content)
 
 
@@ -81,3 +89,12 @@ class RoomNameAPIView(APIView):
         a, b = sorted([int(request.user.id), int(other.id)])
         room_name = f"{a}_{b}"
         return Response({'room_name': room_name})
+
+
+class InboxAPIView(generics.ListAPIView):
+    """Return the last 5 messages received by the authenticated user."""
+    permission_classes = (IsAuthenticated,)
+    serializer_class = MessageSerializer
+
+    def get_queryset(self):
+        return Message.objects.filter(recipient=self.request.user).order_by('-timestamp')[:5]
